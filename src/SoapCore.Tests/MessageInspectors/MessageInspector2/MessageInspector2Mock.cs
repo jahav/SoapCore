@@ -3,6 +3,8 @@ using System.ServiceModel.Channels;
 using SoapCore.Extensibility;
 using SoapCore.ServiceModel;
 
+// Use of obsolete symbol - Unit test is making sure the legacy api adapter is working correctly.
+#pragma warning disable 618
 namespace SoapCore.Tests.MessageInspectors.MessageInspector2
 {
 	public class MessageInspector2Mock : IMessageInspector2

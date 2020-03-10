@@ -107,10 +107,9 @@ namespace SoapCore
 				</s:Body>
 			</s:Envelope>
 			*/
-			if (_exception is FaultException)
+			if (_exception is FaultException faultException)
 			{
-				var faultException = (FaultException)_exception;
-				if (faultException != null && faultException.Code != null && !string.IsNullOrEmpty(faultException.Code.Name))
+				if (!string.IsNullOrEmpty(faultException.Code?.Name))
 				{
 					if (!string.IsNullOrEmpty(faultException.Code.Namespace))
 					{

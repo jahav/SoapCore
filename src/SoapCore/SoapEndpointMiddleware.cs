@@ -191,8 +191,6 @@ namespace SoapCore
 
 		private async Task ProcessOperation(HttpContext httpContext, IServiceProvider serviceProvider)
 		{
-			Message responseMessage;
-
 			//Reload the body to ensure we have the full message
 			var memoryStream = new MemoryStream((int)httpContext.Request.ContentLength.GetValueOrDefault(1024));
 			await httpContext.Request.Body.CopyToAsync(memoryStream).ConfigureAwait(false);
@@ -220,57 +218,75 @@ namespace SoapCore
 
 			//Get the message
 			Message requestMessage = await ReadMessageAsync(httpContext, messageEncoder);
-			var messageFilters = serviceProvider.GetServices<IMessageFilter>().ToArray();
-			var asyncMessageFilters = serviceProvider.GetServices<IAsyncMessageFilter>().ToArray();
 
-			//Execute request message filters
+			var messageFilterPipeline = CreateMessageFilterPipeline(
+				httpContext,
+				serviceProvider,
+				messageEncoder,
+				requestMessage);
 			try
 			{
-				foreach (var messageFilter in messageFilters)
+				await messageFilterPipeline();
+			}
+			catch (Exception ex)
+			{
+				await WriteErrorResponseMessage(ex, StatusCodes.Status500InternalServerError, serviceProvider, requestMessage, httpContext);
+			}
+		}
+
+		private MessageFilterExecutionDelegate CreateMessageFilterPipeline(HttpContext httpContext, IServiceProvider serviceProvider, SoapMessageEncoder messageEncoder, Message requestMessage)
+		{
+			var soapMessageFilters = serviceProvider.GetServices<ISoapMessageFilter>().ToList();
+			var legacyApiAdapterFilters = serviceProvider.GetLegacyApiFilters();
+			soapMessageFilters.AddRange(legacyApiAdapterFilters);
+
+			var requestContext = new MessageFilterExecutingContext(requestMessage, _service);
+			MessageFilterExecutionDelegate executeOperation = async ()
+				=> await ProcessOneOperation(requestContext.Message, messageEncoder, httpContext, serviceProvider);
+
+			var nextMessageFilter = executeOperation;
+			foreach (var messageFilter in soapMessageFilters.AsEnumerable().Reverse())
+			{
+				// if next filter is not called, this is null
+				MessageFilterExecutedContext capturedNextFilterResult = null;
+
+				// Since the filter doesn't actually return anything, I need a wrapper to capture the result of next filter to pass it up the pipeline
+				var nextMessageFilterInClosure = nextMessageFilter;
+				MessageFilterExecutionDelegate executeNextFilter = async () =>
 				{
-					messageFilter.OnRequestExecuting(requestMessage);
-				}
+					var isPipelineShortCircuited = requestContext.Result != null;
+					if (isPipelineShortCircuited)
+					{
+						capturedNextFilterResult = MessageFilterExecutedContext.Create(requestContext.Message, _service);
+						return capturedNextFilterResult;
+					}
 
-				foreach (var messageFilter in asyncMessageFilters)
+					var result = await nextMessageFilterInClosure();
+					capturedNextFilterResult = result;
+					return result;
+				};
+
+				var messageFilterInClosure = messageFilter;
+				MessageFilterExecutionDelegate messageFilterDelegate = async () =>
 				{
-					await messageFilter.OnRequestExecuting(requestMessage);
-				}
-			}
-			catch (Exception ex)
-			{
-				await WriteErrorResponseMessage(ex, StatusCodes.Status500InternalServerError, serviceProvider, requestMessage, httpContext);
-				return;
+					await messageFilterInClosure.OnMessageReceived(requestContext, executeNextFilter);
+					var filterDidntCallNext = capturedNextFilterResult == null;
+					if (filterDidntCallNext && requestContext.Result == null)
+					{
+						_logger.LogDebug($"Message filter {messageFilterInClosure.GetType()} short-circuited the pipeline (didn't call next() nor dit it set the {nameof(MessageFilterExecutingContext)}.{nameof(MessageFilterExecutingContext.Result)}). This service won't return any message, same as one-way MEP.");
+					}
+
+					return capturedNextFilterResult;
+				};
+				nextMessageFilter = messageFilterDelegate;
 			}
 
-			var messageInspector = serviceProvider.GetService<IMessageInspector>();
-			object correlationObject;
+			return nextMessageFilter;
+		}
 
-			try
-			{
-				correlationObject = messageInspector?.AfterReceiveRequest(ref requestMessage);
-			}
-			catch (Exception ex)
-			{
-				await WriteErrorResponseMessage(ex, StatusCodes.Status500InternalServerError, serviceProvider, requestMessage, httpContext);
-				return;
-			}
-
-			var messageInspector2s = serviceProvider.GetServices<IMessageInspector2>();
-#pragma warning disable SA1009 // StyleCop has not yet been updated to support tuples
-			var correlationObjects2 = default(List<(IMessageInspector2 inspector, object correlationObject)>);
-#pragma warning restore SA1009
-
-			try
-			{
-#pragma warning disable SA1008 // StyleCop has not yet been updated to support tuples
-				correlationObjects2 = messageInspector2s.Select(mi => (inspector: mi, correlationObject: mi.AfterReceiveRequest(ref requestMessage, _service))).ToList();
-#pragma warning restore SA1008
-			}
-			catch (Exception ex)
-			{
-				await WriteErrorResponseMessage(ex, StatusCodes.Status500InternalServerError, serviceProvider, requestMessage, httpContext);
-				return;
-			}
+		private async Task<MessageFilterExecutedContext> ProcessOneOperation(Message requestMessage, SoapMessageEncoder messageEncoder, HttpContext httpContext, IServiceProvider serviceProvider)
+		{
+			Message responseMessage;
 
 			// for getting soapaction and parameters in body
 			// GetReaderAtBodyContents must not be called twice in one request
@@ -304,7 +320,7 @@ namespace SoapCore
 					if (operation.IsOneWay)
 					{
 						httpContext.Response.StatusCode = (int)HttpStatusCode.Accepted;
-						return;
+						return MessageFilterExecutedContext.CreateOneWay(_service);
 					}
 
 					var resultOutDictionary = new Dictionary<string, object>();
@@ -319,12 +335,11 @@ namespace SoapCore
 					httpContext.Response.ContentType = httpContext.Request.ContentType;
 					httpContext.Response.Headers["SOAPAction"] = responseMessage.Headers.Action;
 
-					correlationObjects2.ForEach(mi => mi.inspector.BeforeSendReply(ref responseMessage, _service, mi.correlationObject));
-
-					messageInspector?.BeforeSendReply(ref responseMessage, correlationObject);
+#warning delete later, write as action filters 
+					//					correlationObjects2.ForEach(mi => mi.inspector.BeforeSendReply(ref responseMessage, _service, mi.correlationObject));
+					//					messageInspector?.BeforeSendReply(ref responseMessage, correlationObject);
 
 					SetHttpResponse(httpContext, responseMessage);
-
 					await WriteMessageAsync(messageEncoder, responseMessage, httpContext);
 				}
 				catch (Exception exception)
@@ -339,23 +354,7 @@ namespace SoapCore
 				}
 			}
 
-			// Execute response message filters
-			try
-			{
-				foreach (var messageFilter in messageFilters)
-				{
-					messageFilter.OnResponseExecuting(responseMessage);
-				}
-
-				foreach (var messageFilter in asyncMessageFilters.Reverse())
-				{
-					await messageFilter.OnResponseExecuting(responseMessage);
-				}
-			}
-			catch (Exception ex)
-			{
-				responseMessage = await WriteErrorResponseMessage(ex, StatusCodes.Status500InternalServerError, serviceProvider, requestMessage, httpContext);
-			}
+			return MessageFilterExecutedContext.Create(responseMessage, _service);
 		}
 
 		private Message CreateResponseMessage(
