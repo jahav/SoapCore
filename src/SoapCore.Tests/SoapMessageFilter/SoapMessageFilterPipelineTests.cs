@@ -1,7 +1,6 @@
 using System;
 using System.IO;
 using System.Linq;
-using System.Runtime.Serialization;
 using System.ServiceModel;
 using System.ServiceModel.Channels;
 using System.Text;
@@ -47,7 +46,7 @@ namespace SoapCore.Tests.SoapMessageFilter
 		{
 			_checkpoint = 0;
 			_serviceCollection = new ServiceCollection();
-			_pingService = new PingService(GetNextCheckpoint);
+			_pingService = new PingService(GetCheckpoint);
 			_serviceCollection.AddSingleton(_pingService);
 		}
 
@@ -56,9 +55,9 @@ namespace SoapCore.Tests.SoapMessageFilter
 		{
 			var filters = new[]
 			{
-				new TestFilter(GetNextCheckpoint),
-				new TestFilter(GetNextCheckpoint),
-				new TestFilter(GetNextCheckpoint),
+				new TestFilter(GetCheckpoint),
+				new TestFilter(GetCheckpoint),
+				new TestFilter(GetCheckpoint),
 			};
 			RegisterFilters(filters.Select(x => (ISoapMessageFilter)x).ToArray());
 
@@ -96,9 +95,9 @@ namespace SoapCore.Tests.SoapMessageFilter
 		public async Task FilterCanShortCircuitPipeline(bool callNext)
 		{
 			// Cross your fingers that order of registration is order of resolve
-			var firstFilter = new TestFilter(GetNextCheckpoint);
-			var shortCircuitFilter = new ShortCircuitFilter(callNext, GetNextCheckpoint);
-			var cancelledFilter = new TestFilter(GetNextCheckpoint);
+			var firstFilter = new TestFilter(GetCheckpoint);
+			var shortCircuitFilter = new ShortCircuitFilter(callNext, GetCheckpoint);
+			var cancelledFilter = new TestFilter(GetCheckpoint);
 			RegisterFilters(firstFilter, shortCircuitFilter, cancelledFilter);
 
 			await ProcessPingMessage();
@@ -112,9 +111,9 @@ namespace SoapCore.Tests.SoapMessageFilter
 		}
 
 		[TestMethod]
-		public async Task ShorCircuitedFilterWithNoResultWontReturnMessageToClient()
+		public async Task ShortCircuitedFilterWithNoResultWontReturnMessageToClient()
 		{
-			var shortCircuitedFilter = new ShortCircuitNoResultFilter(GetNextCheckpoint);
+			var shortCircuitedFilter = new ShortCircuitNoResultFilter(GetCheckpoint);
 			RegisterFilters(shortCircuitedFilter);
 
 			var httpContext = await ProcessPingMessage();
@@ -129,7 +128,7 @@ namespace SoapCore.Tests.SoapMessageFilter
 		[TestMethod]
 		public async Task FilterCanThrowExceptionThatFlowsUpThroughPipeline()
 		{
-			var firstFilter = new TestFilter(GetNextCheckpoint);
+			var firstFilter = new TestFilter(GetCheckpoint);
 			var throwingFilter = new ThrowingFilter();
 			RegisterFilters(firstFilter, throwingFilter);
 
@@ -200,7 +199,7 @@ namespace SoapCore.Tests.SoapMessageFilter
 			return httpContext;
 		}
 
-		private int GetNextCheckpoint() => ++_checkpoint;
+		private int GetCheckpoint() => ++_checkpoint;
 
 		[ServiceContract]
 		private class PingService
@@ -293,27 +292,15 @@ namespace SoapCore.Tests.SoapMessageFilter
 			public async Task OnMessageReceived(MessageFilterExecutingContext requestContext, MessageFilterExecutionDelegate next)
 			{
 				Checkpoint = _getCheckpoint();
-				var fault = new Fault
-				{
-					FaultCode = "wrongTagPrefix:Client",
-					FaultString = "You shall not pass."
-				};
-				requestContext.Result = Message.CreateMessage(requestContext.Message.Version, requestContext.Message.Headers.Action, fault);
+				requestContext.Result = Message.CreateMessage(
+					MessageVersion.Default,
+					requestContext.Message.Headers.Action,
+					"Response body");
 
 				if (_callNext)
 				{
 					await next();
 				}
-			}
-
-			[DataContract(Name = "Fault", Namespace = "http://schemas.xmlsoap.org/soap/envelope/")]
-			private class Fault
-			{
-				[DataMember(Name = "faultcode", Order = 1)]
-				public string FaultCode { get; set; }
-
-				[DataMember(Name = "faultstring", Order = 2)]
-				public string FaultString { get; set; }
 			}
 		}
 
