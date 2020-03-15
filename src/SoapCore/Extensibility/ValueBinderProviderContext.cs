@@ -18,7 +18,7 @@ namespace SoapCore.Extensibility
 		}
 
 		/// <summary>
-		/// Gets type of deserialized argument value. If nothing, then null value.
+		/// Gets type of deserialized argument value. If nothing was deserialized, then null value.
 		/// </summary>
 		public Type ValueType { get; }
 

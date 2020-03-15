@@ -219,11 +219,14 @@ namespace SoapCore
 			//Get the message
 			Message requestMessage = await ReadMessageAsync(httpContext, messageEncoder);
 
-			var messageFilterPipeline = CreateMessageFilterPipeline(
-				httpContext,
-				serviceProvider,
-				messageEncoder,
-				requestMessage);
+			var filters = serviceProvider.GetServices<ISoapMessageFilter>()
+				.Concat(serviceProvider.GetLegacyApiFilters())
+				.ToList();
+			var messageFilterPipeline = FilterPipeline.CreateMessageFilterPipeline(
+				filters,
+				_logger,
+				new MessageFilterExecutingContext(requestMessage, _service),
+				async ctx => await ProcessOneOperation(ctx.Message, messageEncoder, httpContext, serviceProvider));
 			try
 			{
 				await messageFilterPipeline();
@@ -232,56 +235,6 @@ namespace SoapCore
 			{
 				await WriteErrorResponseMessage(ex, StatusCodes.Status500InternalServerError, serviceProvider, requestMessage, httpContext);
 			}
-		}
-
-		private MessageFilterExecutionDelegate CreateMessageFilterPipeline(HttpContext httpContext, IServiceProvider serviceProvider, SoapMessageEncoder messageEncoder, Message requestMessage)
-		{
-			var soapMessageFilters = serviceProvider.GetServices<ISoapMessageFilter>().ToList();
-			var legacyApiAdapterFilters = serviceProvider.GetLegacyApiFilters();
-			soapMessageFilters.AddRange(legacyApiAdapterFilters);
-
-			var requestContext = new MessageFilterExecutingContext(requestMessage, _service);
-			MessageFilterExecutionDelegate executeOperation = async ()
-				=> await ProcessOneOperation(requestContext.Message, messageEncoder, httpContext, serviceProvider);
-
-			var nextMessageFilter = executeOperation;
-			foreach (var messageFilter in soapMessageFilters.AsEnumerable().Reverse())
-			{
-				// if next filter is not called, this is null
-				MessageFilterExecutedContext capturedNextFilterResult = null;
-
-				// Since the filter doesn't actually return anything, I need a wrapper to capture the result of next filter to pass it up the pipeline
-				var nextMessageFilterInClosure = nextMessageFilter;
-				MessageFilterExecutionDelegate executeNextFilter = async () =>
-				{
-					var isPipelineShortCircuited = requestContext.Result != null;
-					if (isPipelineShortCircuited)
-					{
-						capturedNextFilterResult = MessageFilterExecutedContext.Create(requestContext.Message, _service);
-						return capturedNextFilterResult;
-					}
-
-					var result = await nextMessageFilterInClosure();
-					capturedNextFilterResult = result;
-					return result;
-				};
-
-				var messageFilterInClosure = messageFilter;
-				MessageFilterExecutionDelegate messageFilterDelegate = async () =>
-				{
-					await messageFilterInClosure.OnMessageReceived(requestContext, executeNextFilter);
-					var filterDidntCallNext = capturedNextFilterResult == null;
-					if (filterDidntCallNext && requestContext.Result == null)
-					{
-						_logger.LogDebug($"Message filter {messageFilterInClosure.GetType()} short-circuited the pipeline (didn't call next() nor dit it set the {nameof(MessageFilterExecutingContext)}.{nameof(MessageFilterExecutingContext.Result)}). This service won't return any message, same as one-way MEP.");
-					}
-
-					return capturedNextFilterResult;
-				};
-				nextMessageFilter = messageFilterDelegate;
-			}
-
-			return nextMessageFilter;
 		}
 
 		private async Task<MessageFilterExecutedContext> ProcessOneOperation(Message requestMessage, SoapMessageEncoder messageEncoder, HttpContext httpContext, IServiceProvider serviceProvider)
@@ -312,10 +265,40 @@ namespace SoapCore
 					// Get operation arguments from message
 					var arguments = GetRequestArguments(requestMessage, reader, operation, httpContext);
 
-					await ExecuteFiltersAndTune(httpContext, serviceProvider, operation, arguments, serviceInstance);
+					var binderProviders = serviceProvider.GetServices<IValueBinderProvider>().ToList();
+					await WrapBinders(httpContext, binderProviders, operation, arguments);
+
+					/*
+		await ExecuteFiltersAndTune(httpContext, serviceProvider, operation, arguments, serviceInstance);
+							// Execute Mvc ActionFilters
+			foreach (var actionFilterAttr in operation.DispatchMethod.CustomAttributes.Where(a => a.AttributeType.Name == "ServiceFilterAttribute"))
+			{
+				var actionFilter = serviceProvider.GetService(actionFilterAttr.ConstructorArguments[0].Value as Type);
+				actionFilter.GetType().GetMethod("OnSoapActionExecuting")?.Invoke(actionFilter, new[] { operation.Name, arguments, httpContext, modelBindingOutput });
+			}
+
+			// Invoke OnModelBound
+			_soapModelBounder?.OnModelBound(operation.DispatchMethod, arguments);
+
+			// Tune service instance for operation call
+			var serviceOperationTuners = serviceProvider.GetServices<IServiceOperationTuner>();
+			foreach (var operationTuner in serviceOperationTuners)
+			{
+				operationTuner.Tune(httpContext, serviceInstance, operation);
+			}
+*/
 
 					var invoker = serviceProvider.GetService<IOperationInvoker>() ?? new DefaultOperationInvoker();
-					var responseObject = await invoker.InvokeAsync(operation.DispatchMethod, serviceInstance, arguments);
+					invoker = new UnwrapReflectionDecorator(invoker, _logger);
+
+					var pipeline = FilterPipeline.CreateOperationFilterPipeline(
+						serviceProvider.GetServices<IOperationFilter>(),
+						new OperationExecutingContext(httpContext, arguments, serviceInstance, operation),
+						invoker,
+						_logger);
+
+					var executedContext = await pipeline();
+					var responseObject = executedContext.Result;
 
 					if (operation.IsOneWay)
 					{
@@ -335,7 +318,7 @@ namespace SoapCore
 					httpContext.Response.ContentType = httpContext.Request.ContentType;
 					httpContext.Response.Headers["SOAPAction"] = responseMessage.Headers.Action;
 
-#warning delete later, write as action filters 
+#warning delete later, write as action/message filters 
 					//					correlationObjects2.ForEach(mi => mi.inspector.BeforeSendReply(ref responseMessage, _service, mi.correlationObject));
 					//					messageInspector?.BeforeSendReply(ref responseMessage, correlationObject);
 
@@ -408,40 +391,30 @@ namespace SoapCore
 			return responseMessage;
 		}
 
-		private async Task ExecuteFiltersAndTune(HttpContext httpContext, IServiceProvider serviceProvider, OperationDescription operation, object[] arguments, object serviceInstance)
+		private async Task WrapBinders(
+			HttpContext httpContext,
+			IReadOnlyCollection<IValueBinderProvider> binderProviders,
+			OperationDescription operation,
+			object[] arguments)
 		{
+			if (!binderProviders.Any())
+			{
+				return;
+			}
+
 			foreach (var parameterInfo in operation.InParameters)
 			{
 				var argument = arguments[parameterInfo.Index];
 				var providerContext = new ValueBinderProviderContext(operation, parameterInfo, argument?.GetType());
-				var valueBinder = serviceProvider.GetServices<IValueBinderProvider>()
+				var valueBinders = binderProviders
 					.Select(binderProvider => binderProvider.GetBinder(providerContext))
-					.Where(binder => binder != null)
-					.FirstOrDefault();
+					.Where(binder => binder != null);
 
-				if (valueBinder == null)
+				var valueContext = new ValueBindingContext(argument, parameterInfo, operation, httpContext);
+				foreach (var valueBinder in valueBinders)
 				{
-					break;
+					await valueBinder.BindValue(valueContext);
 				}
-
-				await valueBinder.BindValue(new ValueBindingContext(argument, parameterInfo, operation, httpContext));
-			}
-
-			// Execute Mvc ActionFilters
-			foreach (var actionFilterAttr in operation.DispatchMethod.CustomAttributes.Where(a => a.AttributeType.Name == "ServiceFilterAttribute"))
-			{
-				var actionFilter = serviceProvider.GetService(actionFilterAttr.ConstructorArguments[0].Value as Type);
-				actionFilter.GetType().GetMethod("OnSoapActionExecuting")?.Invoke(actionFilter, new[] { operation.Name, arguments, httpContext, modelBindingOutput });
-			}
-
-			// Invoke OnModelBound
-			_soapModelBounder?.OnModelBound(operation.DispatchMethod, arguments);
-
-			// Tune service instance for operation call
-			var serviceOperationTuners = serviceProvider.GetServices<IServiceOperationTuner>();
-			foreach (var operationTuner in serviceOperationTuners)
-			{
-				operationTuner.Tune(httpContext, serviceInstance, operation);
 			}
 		}
 

@@ -7,8 +7,7 @@ namespace SoapCore.Extensibility
 	/// A continuation delegate for <see cref="ISoapMessageFilter"/>. It either calls next filter or the rest of the message processing.
 	/// </summary>
 	/// <returns>A context describing a result of the pipeline.</returns>
-	public delegate Task<MessageFilterExecutedContext> MessageFilterExecutionDelegate(
-		);
+	public delegate Task<MessageFilterExecutedContext> MessageFilterExecutionDelegate();
 
 	/// <summary>
 	/// <para>
