@@ -1,3 +1,4 @@
+using System;
 using Microsoft.AspNetCore.Http;
 using SoapCore.ServiceModel;
 
@@ -6,6 +7,7 @@ namespace SoapCore.Extensibility
 	/// <summary>
 	/// Interface for tuning each operation call
 	/// </summary>
+	[Obsolete("Interface has been replaced with " + nameof(IOperationFilter) + ".")]
 	public interface IServiceOperationTuner
 	{
 		/// <summary>

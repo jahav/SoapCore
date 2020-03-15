@@ -1,5 +1,5 @@
-using SoapCore.ServiceModel;
 using System;
+using SoapCore.ServiceModel;
 
 namespace SoapCore.Extensibility
 {

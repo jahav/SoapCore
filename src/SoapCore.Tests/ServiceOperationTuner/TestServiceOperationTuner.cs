@@ -1,8 +1,8 @@
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Primitives;
-using SoapCore;
 using SoapCore.Extensibility;
 
+#pragma warning disable CS0618 // Type or member is obsolete. Interface has been replaced, test ensures adapter is working.
 namespace SoapCore.Tests.ServiceOperationTuner
 {
 	public class TestServiceOperationTuner : IServiceOperationTuner

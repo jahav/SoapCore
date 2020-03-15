@@ -1,6 +1,3 @@
-using SoapCore.ServiceModel;
-using System.Threading.Tasks;
-
 namespace SoapCore.Extensibility
 {
 	/// <summary>

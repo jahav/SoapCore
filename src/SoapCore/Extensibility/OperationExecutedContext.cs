@@ -1,6 +1,6 @@
+using System;
 using Microsoft.AspNetCore.Http;
 using SoapCore.ServiceModel;
-using System;
 
 namespace SoapCore.Extensibility
 {

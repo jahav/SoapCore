@@ -268,32 +268,14 @@ namespace SoapCore
 
 					await ExecuteValueBinders(operation, arguments, httpContext, serviceProvider);
 
-					/*
-		await ExecuteFiltersAndTune(httpContext, serviceProvider, operation, arguments, serviceInstance);
-							// Execute Mvc ActionFilters
-			foreach (var actionFilterAttr in operation.DispatchMethod.CustomAttributes.Where(a => a.AttributeType.Name == "ServiceFilterAttribute"))
-			{
-				var actionFilter = serviceProvider.GetService(actionFilterAttr.ConstructorArguments[0].Value as Type);
-				actionFilter.GetType().GetMethod("OnSoapActionExecuting")?.Invoke(actionFilter, new[] { operation.Name, arguments, httpContext, modelBindingOutput });
-			}
-
-			// Invoke OnModelBound
-			_soapModelBounder?.OnModelBound(operation.DispatchMethod, arguments);
-
-			// Tune service instance for operation call
-			var serviceOperationTuners = serviceProvider.GetServices<IServiceOperationTuner>();
-			foreach (var operationTuner in serviceOperationTuners)
-			{
-				operationTuner.Tune(httpContext, serviceInstance, operation);
-			}
-*/
-
 					var invoker = serviceProvider.GetService<IOperationInvoker>() ?? new DefaultOperationInvoker();
-					invoker = new UnwrapReflectionDecorator(invoker, _logger);
+					invoker = new UnwrapReflectionDecorator(invoker);
 
+					var operationFilters = serviceProvider.GetServices<IOperationFilter>().ToList();
+					operationFilters.Add(new LegacyOperationFiltersAdapter(_soapModelBounder, serviceProvider));
 					var pipeline = Pipeline<IOperationFilter, OperationExecutingContext, OperationExecutedContext>
 						.CreateOperationFilterPipeline(
-							serviceProvider.GetServices<IOperationFilter>(),
+							operationFilters,
 							invoker,
 							_logger);
 
@@ -319,19 +301,15 @@ namespace SoapCore
 					httpContext.Response.ContentType = httpContext.Request.ContentType;
 					httpContext.Response.Headers["SOAPAction"] = responseMessage.Headers.Action;
 
-#warning delete later, write as action/message filters 
-					//					correlationObjects2.ForEach(mi => mi.inspector.BeforeSendReply(ref responseMessage, _service, mi.correlationObject));
-					//					messageInspector?.BeforeSendReply(ref responseMessage, correlationObject);
-
 					SetHttpResponse(httpContext, responseMessage);
 					await WriteMessageAsync(messageEncoder, responseMessage, httpContext);
 				}
 				catch (Exception exception)
 				{
-					if (exception is TargetInvocationException targetInvocationException)
-					{
-						exception = targetInvocationException.InnerException;
-					}
+					//if (exception is TargetInvocationException targetInvocationException)
+					//{
+					//	exception = targetInvocationException.InnerException;
+					//}
 
 					_logger.LogWarning(0, exception, exception?.Message);
 					responseMessage = await WriteErrorResponseMessage(exception, StatusCodes.Status500InternalServerError, serviceProvider, requestMessage, httpContext);
