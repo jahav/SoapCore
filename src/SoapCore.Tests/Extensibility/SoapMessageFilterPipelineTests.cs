@@ -14,7 +14,7 @@ using Microsoft.VisualStudio.TestTools.UnitTesting;
 using Moq;
 using SoapCore.Extensibility;
 
-namespace SoapCore.Tests.SoapMessageFilter
+namespace SoapCore.Tests.Extensibility
 {
 	[TestClass]
 	public class SoapMessageFilterPipelineTests
