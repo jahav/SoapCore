@@ -222,14 +222,15 @@ namespace SoapCore
 			var filters = serviceProvider.GetServices<ISoapMessageFilter>()
 				.Concat(serviceProvider.GetLegacyApiFilters())
 				.ToList();
-			var messageFilterPipeline = FilterPipeline.CreateMessageFilterPipeline(
-				filters,
-				_logger,
-				new MessageFilterExecutingContext(requestMessage, _service),
-				async ctx => await ProcessOneOperation(ctx.Message, messageEncoder, httpContext, serviceProvider));
+			var messageFilterPipeline = Pipeline<ISoapMessageFilter, MessageFilterExecutingContext, MessageFilterExecutedContext>
+				.CreateMessageFilterPipeline(
+					filters,
+					async ctx => await ProcessOneOperation(ctx.Message, messageEncoder, httpContext, serviceProvider),
+					_logger);
 			try
 			{
-				await messageFilterPipeline();
+				var context = new MessageFilterExecutingContext(requestMessage, _service);
+				await messageFilterPipeline.Execute(context);
 			}
 			catch (Exception ex)
 			{
@@ -265,8 +266,7 @@ namespace SoapCore
 					// Get operation arguments from message
 					var arguments = GetRequestArguments(requestMessage, reader, operation, httpContext);
 
-					var binderProviders = serviceProvider.GetServices<IValueBinderProvider>().ToList();
-					await WrapBinders(httpContext, binderProviders, operation, arguments);
+					await ExecuteValueBinders(operation, arguments, httpContext, serviceProvider);
 
 					/*
 		await ExecuteFiltersAndTune(httpContext, serviceProvider, operation, arguments, serviceInstance);
@@ -291,13 +291,14 @@ namespace SoapCore
 					var invoker = serviceProvider.GetService<IOperationInvoker>() ?? new DefaultOperationInvoker();
 					invoker = new UnwrapReflectionDecorator(invoker, _logger);
 
-					var pipeline = FilterPipeline.CreateOperationFilterPipeline(
-						serviceProvider.GetServices<IOperationFilter>(),
-						new OperationExecutingContext(httpContext, arguments, serviceInstance, operation),
-						invoker,
-						_logger);
+					var pipeline = Pipeline<IOperationFilter, OperationExecutingContext, OperationExecutedContext>
+						.CreateOperationFilterPipeline(
+							serviceProvider.GetServices<IOperationFilter>(),
+							invoker,
+							_logger);
 
-					var executedContext = await pipeline();
+					var context = new OperationExecutingContext(httpContext, arguments, serviceInstance, operation);
+					var executedContext = await pipeline.Execute(context);
 					var responseObject = executedContext.Result;
 
 					if (operation.IsOneWay)
@@ -391,12 +392,13 @@ namespace SoapCore
 			return responseMessage;
 		}
 
-		private async Task WrapBinders(
-			HttpContext httpContext,
-			IReadOnlyCollection<IValueBinderProvider> binderProviders,
-			OperationDescription operation,
-			object[] arguments)
-		{
+		private async Task ExecuteValueBinders(
+            OperationDescription operation,
+            object[] arguments,
+            HttpContext httpContext,
+            IServiceProvider serviceProvider)
+        {
+			var binderProviders = serviceProvider.GetServices<IValueBinderProvider>().ToList();
 			if (!binderProviders.Any())
 			{
 				return;

@@ -5,7 +5,9 @@ using SoapCore.Tests.Model;
 
 namespace SoapCore.Tests.ModelBindingFilter
 {
+#pragma warning disable CS0618 // Type or member is obsolete Testing obsolete interface
 	public class TestModelBindingFilter : IModelBindingFilter
+#pragma warning restore CS0618 // Type or member is obsolete
 	{
 		public TestModelBindingFilter(List<Type> modelTypes)
 		{
