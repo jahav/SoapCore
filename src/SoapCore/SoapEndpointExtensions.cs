@@ -353,7 +353,7 @@ namespace SoapCore
 
 		public static IServiceCollection AddSoapWsSecurityFilter(this IServiceCollection serviceCollection, string username, string password)
 		{
-			serviceCollection.TryAddSingleton(new WsMessageFilter(username, password));
+			serviceCollection.TryAddSingleton<ISoapMessageFilter>(new WsMessageFilter(username, password));
 			return serviceCollection;
 		}
 

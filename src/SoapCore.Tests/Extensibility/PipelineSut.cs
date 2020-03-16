@@ -1,4 +1,3 @@
-using System;
 using System.IO;
 using System.ServiceModel.Channels;
 using System.Text;
@@ -13,7 +12,7 @@ using SoapCore.Extensibility;
 
 namespace SoapCore.Tests.Extensibility
 {
-	internal class ServiceSut<TService>
+	internal class PipelineSut<TService>
 		where TService : class
 	{
 		private const string _servicePath = "/Service.svc";
@@ -21,9 +20,8 @@ namespace SoapCore.Tests.Extensibility
 		private readonly ServiceCollection _serviceCollection;
 		private readonly SoapOptions _defaultTestOptions;
 
-		public ServiceSut(TService serviceInstance)
+		public PipelineSut(TService serviceInstance)
 		{
-			Service = serviceInstance;
 			_serviceCollection = new ServiceCollection();
 			_serviceCollection.AddSingleton(serviceInstance);
 			_defaultTestOptions = new SoapOptions
@@ -69,7 +67,6 @@ namespace SoapCore.Tests.Extensibility
 			features[typeof(IHttpResponseBodyFeature)] = new StreamResponseBodyFeature(new MemoryStream());
 #endif
 
-			//	features[typeof(IResponse)] = new RequestBodyPipeFeature(httpContext);
 			var soapCore = new SoapEndpointMiddleware<CustomMessage>(
 				Mock.Of<ILogger<SoapEndpointMiddleware<CustomMessage>>>(),
 				httpCtx => Task.CompletedTask,
@@ -80,14 +77,14 @@ namespace SoapCore.Tests.Extensibility
 			return httpContext;
 		}
 
-		internal ServiceSut<TService> RegisterFilter<TFilter>(TFilter filter)
+		internal PipelineSut<TService> RegisterMessageFilter<TFilter>(TFilter filter)
 			where TFilter : ISoapMessageFilter
 		{
 			_serviceCollection.AddSingleton<ISoapMessageFilter>(filter);
 			return this;
 		}
 
-		internal ServiceSut<TService> RegisterValueBinder<TBinder>(TBinder valueBinder)
+		internal PipelineSut<TService> RegisterValueBinder<TBinder>(TBinder valueBinder)
 			where TBinder : IValueBinder, IValueBinderProvider
 		{
 			_serviceCollection.AddSingleton<IValueBinderProvider>(valueBinder);
@@ -95,13 +92,13 @@ namespace SoapCore.Tests.Extensibility
 			return this;
 		}
 
-		internal ServiceSut<TService> RegisterFaultTransformer(IFaultExceptionTransformer transformer)
+		internal PipelineSut<TService> RegisterFaultTransformer(IFaultExceptionTransformer transformer)
 		{
 			_serviceCollection.AddSingleton(transformer);
 			return this;
 		}
 
-		internal ServiceSut<TService> RegisterOperationFilter(IOperationFilter filter)
+		internal PipelineSut<TService> RegisterOperationFilter(IOperationFilter filter)
 		{
 			_serviceCollection.AddSingleton(filter);
 			return this;
