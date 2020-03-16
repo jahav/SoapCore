@@ -33,7 +33,9 @@ namespace SoapCore
 		private readonly SoapSerializer _serializer;
 		private readonly Binding _binding;
 		private readonly StringComparison _pathComparisonStrategy;
+#pragma warning disable CS0618 // Type or member is obsolete
 		private readonly ISoapModelBounder _soapModelBounder;
+#pragma warning restore CS0618 // Type or member is obsolete
 		private readonly bool _httpGetEnabled;
 		private readonly bool _httpsGetEnabled;
 		private readonly SoapMessageEncoder[] _messageEncoders;
@@ -306,11 +308,6 @@ namespace SoapCore
 				}
 				catch (Exception exception)
 				{
-					//if (exception is TargetInvocationException targetInvocationException)
-					//{
-					//	exception = targetInvocationException.InnerException;
-					//}
-
 					_logger.LogWarning(0, exception, exception?.Message);
 					responseMessage = await WriteErrorResponseMessage(exception, StatusCodes.Status500InternalServerError, serviceProvider, requestMessage, httpContext);
 				}

@@ -39,8 +39,8 @@ namespace SoapCore.Tests.Extensibility
 		[TestMethod]
 		public async Task MessageFilterExceptionGoesBackToFaultTransformer()
 		{
-			var messageFilterFirst = new CheckpointMessageFilter(_getCheckpoint);
-			var messageFilterShort = new ShortCircuitMessageFilter<ApplicationException>(_getCheckpoint, true);
+			var messageFilterFirst = new CheckpointFilter(_getCheckpoint);
+			var messageFilterShort = new ShortCircuitFilter(_getCheckpoint, true);
 			var sut = new ServiceSut<PingService>(new PingService(_getCheckpoint))
 				.RegisterFilter(messageFilterFirst)
 				.RegisterFilter(messageFilterShort)
@@ -58,8 +58,8 @@ namespace SoapCore.Tests.Extensibility
 		[TestMethod]
 		public async Task ValueBinderExceptionGoesBackToFaultTransformer()
 		{
-			var messageFilter = new CheckpointMessageFilter(_getCheckpoint);
-			var valueBinder = new ShortCircuitValueBinder(_getCheckpoint);
+			var messageFilter = new CheckpointFilter(_getCheckpoint);
+			var valueBinder = CheckpointValueBinder.CreateThrowingException(_getCheckpoint);
 			var sut = new ServiceSut<PingService>(new PingService(_getCheckpoint))
 				.RegisterFilter(messageFilter)
 				.RegisterValueBinder(valueBinder)
@@ -77,10 +77,10 @@ namespace SoapCore.Tests.Extensibility
 		[TestMethod]
 		public async Task OperationFilterExceptionGoesBackToFaultTransformer()
 		{
-			var messageFilter = new CheckpointMessageFilter(_getCheckpoint);
-			var valueBinder = new CheckpointValueBinder(_getCheckpoint);
-			var operationFilterFirst = new CheckpointOperationFilter(_getCheckpoint);
-			var operationFilterShort = new ShortCircuitOperationFilter(_getCheckpoint);
+			var messageFilter = new CheckpointFilter(_getCheckpoint);
+			var valueBinder = CheckpointValueBinder.CreatePassThrough(_getCheckpoint);
+			var operationFilterFirst = new CheckpointFilter(_getCheckpoint);
+			var operationFilterShort = new ShortCircuitFilter(_getCheckpoint);
 			var sut = new ServiceSut<PingService>(new PingService(_getCheckpoint))
 				.RegisterFilter(messageFilter)
 				.RegisterValueBinder(valueBinder)
@@ -103,9 +103,9 @@ namespace SoapCore.Tests.Extensibility
 		[TestMethod]
 		public async Task OperationExecutionExceptionGoesBackToFaultTransformer()
 		{
-			var messageFilter = new CheckpointMessageFilter(_getCheckpoint);
-			var valueBinder = new CheckpointValueBinder(_getCheckpoint);
-			var operationFilter = new CheckpointOperationFilter(_getCheckpoint);
+			var messageFilter = new CheckpointFilter(_getCheckpoint);
+			var valueBinder = CheckpointValueBinder.CreatePassThrough(_getCheckpoint);
+			var operationFilter = new CheckpointFilter(_getCheckpoint);
 			var service = new PingService(_getCheckpoint);
 			var sut = new ServiceSut<PingService>(service)
 				.RegisterFilter(messageFilter)

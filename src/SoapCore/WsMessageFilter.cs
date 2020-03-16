@@ -2,11 +2,12 @@ using System;
 using System.Runtime.Serialization;
 using System.Security.Authentication;
 using System.ServiceModel.Channels;
+using System.Threading.Tasks;
 using SoapCore.Extensibility;
 
 namespace SoapCore
 {
-	public class WsMessageFilter : IMessageFilter
+	public class WsMessageFilter : ISoapMessageFilter
 	{
 		private static string _username;
 		private static string _password;
@@ -27,13 +28,12 @@ namespace SoapCore
 			_authInvalidErrorMessage = authInvalidErrorMessage;
 		}
 
-		public void OnRequestExecuting(Message message)
+		public Task OnMessageReceived(MessageFilterExecutingContext requestContext, MessageFilterExecutionDelegate next)
 		{
-			WsUsernameToken wsUsernameToken = null;
-
+			WsUsernameToken wsUsernameToken;
 			try
 			{
-				wsUsernameToken = GetWsUsernameToken(message);
+				wsUsernameToken = GetWsUsernameToken(requestContext.Message);
 			}
 			catch (Exception)
 			{
@@ -44,11 +44,8 @@ namespace SoapCore
 			{
 				throw new InvalidCredentialException(_authInvalidErrorMessage);
 			}
-		}
 
-		public void OnResponseExecuting(Message message)
-		{
-			//empty
+			return next();
 		}
 
 		private WsUsernameToken GetWsUsernameToken(Message message)

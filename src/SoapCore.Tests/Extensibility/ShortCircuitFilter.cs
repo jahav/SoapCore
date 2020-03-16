@@ -4,13 +4,12 @@ using SoapCore.Extensibility;
 
 namespace SoapCore.Tests.Extensibility
 {
-	internal class ShortCircuitMessageFilter<TException> : ISoapMessageFilter
-		where TException : Exception, new()
+	internal class ShortCircuitFilter : ISoapMessageFilter, IOperationFilter
 	{
 		private readonly Func<int> _getCheckpoint;
 		private readonly bool _throughException;
 
-		public ShortCircuitMessageFilter(Func<int> getCheckpoint, bool throughException = false)
+		public ShortCircuitFilter(Func<int> getCheckpoint, bool throughException = false)
 		{
 			_getCheckpoint = getCheckpoint;
 			_throughException = throughException;
@@ -20,10 +19,20 @@ namespace SoapCore.Tests.Extensibility
 
 		public Task OnMessageReceived(MessageFilterExecutingContext requestContext, MessageFilterExecutionDelegate next)
 		{
+			return RunFilter();
+		}
+
+		public Task OnOperationExecution(OperationExecutingContext context, OperationFilterExecutionDelegate next)
+		{
+			return RunFilter();
+		}
+
+		private Task RunFilter()
+		{
 			Checkpoint = _getCheckpoint();
 			if (_throughException)
 			{
-				throw new TException();
+				throw new ApplicationException();
 			}
 
 			return Task.CompletedTask;
