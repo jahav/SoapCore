@@ -10,13 +10,14 @@ using SoapCore.Extensibility;
 namespace SoapCore.Tests.Extensibility
 {
 	/// <summary>
-	/// Test that when an element in the pipeline short circuits (by any means), the control flow
+	/// Test that when an element in the pipeline short circuits by exception, the control flow
 	/// through the pipeline works as expected.
 	/// </summary>
 	[TestClass]
 	public partial class PipelineShortCircuitTests
 	{
 		private Func<int> _getCheckpoint;
+		private Mock<IFaultExceptionTransformer> _faultTransformer;
 
 		[TestInitialize]
 		public void InitializePipeline()
@@ -28,35 +29,100 @@ namespace SoapCore.Tests.Extensibility
 				return GetCheckpoint;
 			};
 			_getCheckpoint = createCheckpoint();
-		}
-
-		[TestMethod]
-		public async Task MessageFilterShortGoesBackThroughMessageFilter()
-		{
-			var sut = new ServiceSut<PingService>(new PingService(_getCheckpoint));
-			var messageFilterFirst = new CheckpointMessageFilter(_getCheckpoint);
-			var messageFilterShort = new ShortCircuitMessageFilter<ApplicationException>(_getCheckpoint, true);
-			var messageFilterLast = new CheckpointMessageFilter(_getCheckpoint);
-			var faultTransformer = new Mock<IFaultExceptionTransformer>();
-			faultTransformer
+			_faultTransformer = new Mock<IFaultExceptionTransformer>();
+			_faultTransformer
 				.Setup(x => x.ProvideFault(It.IsAny<ApplicationException>(), It.IsAny<MessageVersion>(), It.IsAny<XmlNamespaceManager>()))
 				.Returns(Message.CreateMessage(MessageVersion.Soap11, "dummy", "body"))
 				.Verifiable();
-			sut
+		}
+
+		[TestMethod]
+		public async Task MessageFilterExceptionGoesBackToFaultTransformer()
+		{
+			var messageFilterFirst = new CheckpointMessageFilter(_getCheckpoint);
+			var messageFilterShort = new ShortCircuitMessageFilter<ApplicationException>(_getCheckpoint, true);
+			var sut = new ServiceSut<PingService>(new PingService(_getCheckpoint))
 				.RegisterFilter(messageFilterFirst)
 				.RegisterFilter(messageFilterShort)
-				.RegisterFilter(messageFilterLast)
-				.RegisterFaultTransformer(faultTransformer.Object);
+				.RegisterFaultTransformer(_faultTransformer.Object);
 
 			await sut.ProcessRequest("<Ping/>");
 
 			Assert.AreEqual(1, messageFilterFirst.EntryCheckpoint);
 			Assert.AreEqual(2, messageFilterShort.Checkpoint);
 			Assert.AreEqual(3, messageFilterFirst.ExitCheckpoint);
-			faultTransformer.Verify();
+			Assert.AreEqual(4, _getCheckpoint());
+			_faultTransformer.Verify();
+		}
 
-			Assert.AreEqual(default, messageFilterLast.EntryCheckpoint);
-			Assert.AreEqual(default, messageFilterLast.ExitCheckpoint);
+		[TestMethod]
+		public async Task ValueBinderExceptionGoesBackToFaultTransformer()
+		{
+			var messageFilter = new CheckpointMessageFilter(_getCheckpoint);
+			var valueBinder = new ShortCircuitValueBinder(_getCheckpoint);
+			var sut = new ServiceSut<PingService>(new PingService(_getCheckpoint))
+				.RegisterFilter(messageFilter)
+				.RegisterValueBinder(valueBinder)
+				.RegisterFaultTransformer(_faultTransformer.Object);
+
+			await sut.ProcessRequest(@"<Ping xmlns=""http://tempuri.org/""><text>a</text></Ping>");
+
+			Assert.AreEqual(1, messageFilter.EntryCheckpoint);
+			Assert.AreEqual(2, valueBinder.Checkpoint);
+			Assert.AreEqual(3, messageFilter.ExitCheckpoint);
+			Assert.AreEqual(4, _getCheckpoint());
+			_faultTransformer.Verify();
+		}
+
+		[TestMethod]
+		public async Task OperationFilterExceptionGoesBackToFaultTransformer()
+		{
+			var messageFilter = new CheckpointMessageFilter(_getCheckpoint);
+			var valueBinder = new CheckpointValueBinder(_getCheckpoint);
+			var operationFilterFirst = new CheckpointOperationFilter(_getCheckpoint);
+			var operationFilterShort = new ShortCircuitOperationFilter(_getCheckpoint);
+			var sut = new ServiceSut<PingService>(new PingService(_getCheckpoint))
+				.RegisterFilter(messageFilter)
+				.RegisterValueBinder(valueBinder)
+				.RegisterOperationFilter(operationFilterFirst)
+				.RegisterOperationFilter(operationFilterShort)
+				.RegisterFaultTransformer(_faultTransformer.Object);
+
+			await sut.ProcessRequest(@"<Ping xmlns=""http://tempuri.org/""><text>a</text></Ping>");
+
+			Assert.AreEqual(1, messageFilter.EntryCheckpoint);
+			Assert.AreEqual(2, valueBinder.Checkpoint);
+			Assert.AreEqual(3, operationFilterFirst.EntryCheckpoint);
+			Assert.AreEqual(4, operationFilterShort.Checkpoint);
+			Assert.AreEqual(5, operationFilterFirst.ExitCheckpoint);
+			Assert.AreEqual(6, messageFilter.ExitCheckpoint);
+			Assert.AreEqual(7, _getCheckpoint());
+			_faultTransformer.Verify();
+		}
+
+		[TestMethod]
+		public async Task OperationExecutionExceptionGoesBackToFaultTransformer()
+		{
+			var messageFilter = new CheckpointMessageFilter(_getCheckpoint);
+			var valueBinder = new CheckpointValueBinder(_getCheckpoint);
+			var operationFilter = new CheckpointOperationFilter(_getCheckpoint);
+			var service = new PingService(_getCheckpoint);
+			var sut = new ServiceSut<PingService>(service)
+				.RegisterFilter(messageFilter)
+				.RegisterValueBinder(valueBinder)
+				.RegisterOperationFilter(operationFilter)
+				.RegisterFaultTransformer(_faultTransformer.Object);
+
+			await sut.ProcessRequest(@"<Error xmlns=""http://tempuri.org/""/>");
+
+			Assert.AreEqual(1, messageFilter.EntryCheckpoint);
+			Assert.AreEqual(2, valueBinder.Checkpoint);
+			Assert.AreEqual(3, operationFilter.EntryCheckpoint);
+			Assert.AreEqual(4, service.Checkpoint);
+			Assert.AreEqual(5, operationFilter.ExitCheckpoint);
+			Assert.AreEqual(6, messageFilter.ExitCheckpoint);
+			Assert.AreEqual(7, _getCheckpoint());
+			_faultTransformer.Verify();
 		}
 
 		[ServiceContract]
@@ -69,7 +135,14 @@ namespace SoapCore.Tests.Extensibility
 			public int Checkpoint { get; private set; }
 
 			[OperationContract]
-			public void Ping() => Checkpoint = _getCheckpoint();
+			public void Ping(string text) => Checkpoint = _getCheckpoint();
+
+			[OperationContract]
+			public void Error(string text)
+			{
+				Checkpoint = _getCheckpoint();
+				throw new ApplicationException();
+			}
 		}
 	}
 }

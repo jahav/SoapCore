@@ -1,3 +1,4 @@
+using System;
 using System.IO;
 using System.ServiceModel.Channels;
 using System.Text;
@@ -64,8 +65,8 @@ namespace SoapCore.Tests.Extensibility
 			};
 			features[typeof(IHttpResponseFeature)] = new HttpResponseFeature();
 #if !ASPNET_21
-				features[typeof(IRequestBodyPipeFeature)] = new RequestBodyPipeFeature(httpContext);
-				features[typeof(IHttpResponseBodyFeature)] = new StreamResponseBodyFeature(new MemoryStream());
+			features[typeof(IRequestBodyPipeFeature)] = new RequestBodyPipeFeature(httpContext);
+			features[typeof(IHttpResponseBodyFeature)] = new StreamResponseBodyFeature(new MemoryStream());
 #endif
 
 			//	features[typeof(IResponse)] = new RequestBodyPipeFeature(httpContext);
@@ -86,9 +87,23 @@ namespace SoapCore.Tests.Extensibility
 			return this;
 		}
 
+		internal ServiceSut<TService> RegisterValueBinder<TBinder>(TBinder valueBinder)
+			where TBinder : IValueBinder, IValueBinderProvider
+		{
+			_serviceCollection.AddSingleton<IValueBinderProvider>(valueBinder);
+			_serviceCollection.AddSingleton<IValueBinder>(valueBinder);
+			return this;
+		}
+
 		internal ServiceSut<TService> RegisterFaultTransformer(IFaultExceptionTransformer transformer)
 		{
 			_serviceCollection.AddSingleton(transformer);
+			return this;
+		}
+
+		internal ServiceSut<TService> RegisterOperationFilter(IOperationFilter filter)
+		{
+			_serviceCollection.AddSingleton(filter);
 			return this;
 		}
 	}
